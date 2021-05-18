@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -23,6 +24,15 @@ func TestDB(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 		assertValueMissing(t, db, "key")
 	})
+}
+
+func TestDB_Shutdown(t *testing.T) {
+	db := NewDB()
+
+	err := db.Shutdown(context.Background())
+	if err != nil {
+		t.Fatalf("expected server to shutdown, but it didn't: %v", err)
+	}
 }
 
 func assertValueMissing(t testing.TB, db *DB, key string) {

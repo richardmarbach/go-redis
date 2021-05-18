@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -18,56 +19,106 @@ type entry struct {
 	value  []byte
 }
 
+func (e entry) String() string {
+	return string(e.value)
+}
+
 // DB is the core in-memory database
 type DB struct {
-	entries map[string]string
-	expiry  map[string]int64
+	entries map[string]entry
 	mu      sync.RWMutex
+
+	// Background task management
+	shutdown chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewDB creates a new in memory database
 func NewDB() *DB {
-	return &DB{
-		entries: make(map[string]string, 1_000_000),
-		expiry:  make(map[string]int64, 1_000),
+	db := &DB{
+		entries:  make(map[string]entry, 1_000),
+		shutdown: make(chan struct{}),
+	}
+
+	go db.startVacuum()
+
+	return db
+}
+
+func (db *DB) startVacuum() {
+	db.wg.Add(1)
+	for {
+		select {
+		case <-db.shutdown:
+			db.wg.Done()
+			return
+		case <-time.After(30 * time.Second):
+			db.Vacuum()
+		}
+	}
+}
+
+// Vacuum removes expired entries
+func (db *DB) Vacuum() {
+	startedAt := now()
+	for key, value := range db.entries {
+		if value.expiry < startedAt {
+			db.mu.Lock()
+			delete(db.entries, key)
+			db.mu.Unlock()
+		}
+	}
+}
+
+// Shutdown the database
+func (db *DB) Shutdown(ctx context.Context) error {
+	db.shutdown <- struct{}{}
+
+	c := make(chan struct{})
+
+	go func() {
+		defer close(c)
+		db.wg.Wait()
+	}()
+
+	select {
+	case <-c:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
 // Set a key in the database
 func (db *DB) Set(key, value string) {
 	db.mu.Lock()
-	defer db.mu.Unlock()
-	db.entries[key] = value
+	db.entries[key] = entry{stringEntry, -1, []byte(value)}
+	db.mu.Unlock()
 }
 
 // SetWithExpiry sets a key with expiration time in milliseconds.
 // Expired values are removed the next time they're accessed.
 func (db *DB) SetWithExpiry(key, value string, expiry int64) {
 	db.mu.Lock()
-	defer db.mu.Unlock()
-	db.entries[key] = value
-	db.expiry[key] = (now() + expiry)
+	db.entries[key] = entry{stringEntry, (now() + expiry), []byte(value)}
+	db.mu.Unlock()
 }
 
 // Get a value for the given key
 func (db *DB) Get(key string) (string, bool) {
 	db.mu.RLock()
-	if expiry, found := db.expiry[key]; found {
-		if expiry < now() {
-			db.mu.RUnlock()
-			db.mu.Lock()
-			delete(db.expiry, key)
-			delete(db.entries, key)
-			db.mu.Unlock()
-			return "", false
-		}
-	}
-	defer db.mu.RUnlock()
+	entry, found := db.entries[key]
+	db.mu.RUnlock()
 
-	if value, found := db.entries[key]; found {
-		return value, found
+	if !found {
+		return "", false
 	}
-	return "", false
+
+	if entry.expiry > 0 && entry.expiry < now() {
+		return "", false
+	}
+
+	return entry.String(), found
 }
 
 func now() int64 {

@@ -40,31 +40,23 @@ func TestRedisServer(t *testing.T) {
 
 func NewServer(t testing.TB) net.Conn {
 	s := RedisServer{}
+	err := s.Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	go func() {
+		defer s.Close()
 		// Use next available port
-		if err := s.ListenAndServe(":0"); err != nil {
+		if err := s.Serve(); err != nil {
 			t.Fatal(err)
 		}
 	}()
-
-	t.Cleanup(func() {
-		if err := s.Close(); err != nil {
-			t.Fatal(err)
-		}
-	})
-
-	for !s.Ready {
-	}
 
 	client, err := net.Dial("tcp", s.Addr())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	t.Cleanup(func() {
-		client.Close()
-	})
 
 	return client
 }

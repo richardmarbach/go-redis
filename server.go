@@ -1,11 +1,13 @@
 package redis
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"strings"
+	"syscall"
 )
 
 const DefaultAddr = ":6379"
@@ -56,12 +58,15 @@ func (s *RedisServer) handleConnection(conn net.Conn) {
 		err := client.runCommand(conn)
 		if err != nil {
 			// Client closed the connection
-			if err == io.EOF {
+			if err == io.EOF || errors.Is(err, syscall.EPIPE) {
 				return
 			}
+
 			// If we can' write errors then the connection has been closed
-			if err := client.w.WriteError(err); err != nil {
+			if err := client.w.WriteError(err); errors.Is(err, syscall.EPIPE) {
 				return
+			} else if err != nil {
+				log.Println(err)
 			}
 			client.Clear()
 		}

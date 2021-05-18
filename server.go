@@ -1,4 +1,4 @@
-package main
+package redis
 
 import (
 	"fmt"
@@ -11,7 +11,7 @@ import (
 const DefaultAddr = ":6379"
 
 type RedisServer struct {
-	db *DB
+	DB *DB
 	ln net.Listener
 }
 
@@ -20,12 +20,10 @@ func (s *RedisServer) Addr() string {
 }
 
 func (s *RedisServer) Listen(addr string) (err error) {
-	if addr == "" {
-		addr = DefaultAddr
-	}
-
 	s.ln, err = net.Listen("tcp", addr)
+
 	log.Printf("listening on %s\n", addr)
+
 	return err
 }
 
@@ -33,7 +31,7 @@ func (s *RedisServer) Serve() (err error) {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
-			return nil
+			return err
 		}
 		go s.handleConnection(conn)
 	}
@@ -52,7 +50,7 @@ func (s *RedisServer) Close() (err error) {
 }
 
 func (s *RedisServer) handleConnection(conn net.Conn) {
-	client := &client{NewRESPReader(conn), NewRESPWriter(conn), s.db}
+	client := &client{NewRESPReader(conn), NewRESPWriter(conn), s.DB}
 
 	for {
 		err := client.runCommand(conn)

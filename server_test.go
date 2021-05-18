@@ -1,4 +1,4 @@
-package main
+package redis
 
 import (
 	"net"
@@ -6,6 +6,7 @@ import (
 )
 
 func TestRedisServer(t *testing.T) {
+
 	t.Run("PING", func(t *testing.T) {
 		client := NewServer(t)
 

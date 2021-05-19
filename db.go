@@ -2,8 +2,13 @@ package redis
 
 import (
 	"context"
+	"encoding/binary"
 	"sync"
 	"time"
+)
+
+const (
+	NoExpire = -1
 )
 
 type entryType uint8
@@ -13,19 +18,54 @@ const (
 	intEntry
 )
 
-type entry struct {
+type dbEntry struct {
 	t      entryType
 	expiry int64
 	value  []byte
 }
 
-func (e entry) String() string {
+func NewStringEntry(value string, expiry int64) dbEntry {
+	return dbEntry{
+		t:      stringEntry,
+		expiry: expiry,
+		value:  []byte(value),
+	}
+}
+
+func NewInt64Entry(value int64, expiry int64) dbEntry {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, uint64(value))
+
+	return dbEntry{
+		t:      intEntry,
+		expiry: expiry,
+		value:  buf,
+	}
+}
+
+func (e *dbEntry) Type() entryType {
+	return e.t
+}
+
+func (e *dbEntry) SetString(s string) {
+	e.value = []byte(s)
+}
+
+func (e *dbEntry) String() string {
 	return string(e.value)
+}
+
+func (e *dbEntry) Int64() int64 {
+	return int64(binary.LittleEndian.Uint64(e.value))
+}
+
+func (e *dbEntry) SetInt64(value int64) {
+	binary.LittleEndian.PutUint64(e.value, uint64(value))
 }
 
 // DB is the core in-memory database
 type DB struct {
-	entries map[string]entry
+	entries map[string]dbEntry
 	mu      sync.RWMutex
 
 	// Background task management
@@ -36,7 +76,7 @@ type DB struct {
 // NewDB creates a new in memory database
 func NewDB() *DB {
 	db := &DB{
-		entries:  make(map[string]entry, 1_000),
+		entries:  make(map[string]dbEntry, 1_000),
 		shutdown: make(chan struct{}),
 	}
 
@@ -92,7 +132,7 @@ func (db *DB) Shutdown(ctx context.Context) error {
 // Set a key in the database
 func (db *DB) Set(key, value string) {
 	db.mu.Lock()
-	db.entries[key] = entry{stringEntry, -1, []byte(value)}
+	db.entries[key] = NewStringEntry(value, NoExpire)
 	db.mu.Unlock()
 }
 
@@ -100,7 +140,7 @@ func (db *DB) Set(key, value string) {
 // Expired values are removed the next time they're accessed.
 func (db *DB) SetWithExpiry(key, value string, expiry int64) {
 	db.mu.Lock()
-	db.entries[key] = entry{stringEntry, (now() + expiry), []byte(value)}
+	db.entries[key] = NewStringEntry(value, (now() + expiry))
 	db.mu.Unlock()
 }
 
@@ -119,6 +159,20 @@ func (db *DB) Get(key string) (string, bool) {
 	}
 
 	return entry.String(), found
+}
+
+func (db *DB) Incr(key string, amount int64) (int64, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	entry, found := db.entries[key]
+	if !found {
+		entry = NewInt64Entry(0, NoExpire)
+	}
+
+	entry.SetInt64(entry.Int64() + amount)
+
+	return entry.Int64(), nil
 }
 
 func now() int64 {

@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	// NoExpire is a sentinel value indicating that the entry shouldn't expire
 	NoExpire = -1
 )
 
@@ -66,7 +67,7 @@ func (e *dbEntry) SetInt64(value int64) {
 // DB is the core in-memory database
 type DB struct {
 	entries map[string]dbEntry
-	mu      sync.RWMutex
+	mu      URWMutex
 
 	// Background task management
 	shutdown chan struct{}
@@ -147,14 +148,17 @@ func (db *DB) SetWithExpiry(key, value string, expiry int64) {
 // Get a value for the given key
 func (db *DB) Get(key string) (string, bool) {
 	db.mu.RLock()
+	defer db.mu.RUnlock()
 	entry, found := db.entries[key]
-	db.mu.RUnlock()
 
 	if !found {
 		return "", false
 	}
 
 	if entry.expiry > 0 && entry.expiry < now() {
+		db.mu.Upgrade()
+		delete(db.entries, key)
+		db.mu.Downgrade()
 		return "", false
 	}
 

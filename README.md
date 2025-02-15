@@ -1,3 +1,3 @@
 # Go Redis
 
-Simple redis server implementation following
+Simple redis server implementation
